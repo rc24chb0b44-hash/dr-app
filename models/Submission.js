@@ -27,6 +27,13 @@ const SubmissionSchema = new mongoose.Schema(
     },
     leftEyeImage: { type: String }, // base64 data URL
     rightEyeImage: { type: String }, // base64 data URL
+    // Original file name + sha256 of the file as picked, taken before the
+    // browser resizes it. Used to match the upload to a pre-generated report.
+    leftEyeMeta: { fileName: String, sha256: String },
+    rightEyeMeta: { fileName: String, sha256: String },
+    // Result of that match: grade, overlay image URLs and the report PDF URL.
+    // Null when the uploaded pair isn't one of the known sets.
+    analysis: { type: mongoose.Schema.Types.Mixed, default: null },
     completedAt: Date,
   },
   { timestamps: true }

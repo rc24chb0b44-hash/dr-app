@@ -4,6 +4,24 @@ import { useRef, useState } from 'react';
 import { UploadCloud, RefreshCcw, ImageOff } from 'lucide-react';
 import { resizeImage } from '@/lib/resizeImage';
 
+// Fingerprints the file exactly as it sits on disk — before resizeImage()
+// re-encodes it — so the server can match it to a pre-generated report even
+// if the file has been renamed. Returns '' where SubtleCrypto isn't available
+// (non-HTTPS origins other than localhost); the file name is then the only
+// signal, which is fine.
+async function sha256OfFile(file) {
+  try {
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle) return '';
+    const digest = await subtle.digest('SHA-256', await file.arrayBuffer());
+    return Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  } catch {
+    return '';
+  }
+}
+
 export default function ImageDropzone({ label, value, onChange }) {
   const inputRef = useRef(null);
   const [dragActive, setDragActive] = useState(false);
@@ -19,8 +37,11 @@ export default function ImageDropzone({ label, value, onChange }) {
     setError('');
     setProcessing(true);
     try {
-      const dataUrl = await resizeImage(file);
-      onChange(dataUrl);
+      const [dataUrl, sha256] = await Promise.all([
+        resizeImage(file),
+        sha256OfFile(file),
+      ]);
+      onChange(dataUrl, { fileName: file.name, sha256 });
     } catch (err) {
       setError('Could not process that image. Try another file.');
     } finally {

@@ -32,9 +32,14 @@ Edit `.env.local`:
 ```
 MONGODB_URI=mongodb://127.0.0.1:27017/dr-data-collector
 JWT_SECRET=some_long_random_string
+REPORTS_DIR=C:\Pranav\college\sih\SIH_MathWorks_2026\reports
+SETS_DIR=C:\Pranav\college\sih\SIH_MathWorks_2026\sets
 ```
 
 - If you're running MongoDB locally, just make sure `mongod` is running (default port 27017) — the connection string above will work as-is.
+- `REPORTS_DIR` / `SETS_DIR` are only needed for `npm run sync:reports`, which copies the MATLAB pipeline's output into this repo. The reports themselves are committed (`reports/`, `public/demo-sets/`), so the app runs without them — see §7.1 of the Developer Guide.
+
+Upload one of the demo left/right pairs (they're in `public/demo-sets/`, or served at `/demo-sets/...`) and the app serves that set's real screening PDF and attention maps instead of the placeholder report, with the patient block rewritten from whatever you typed into the form. MATLAB is never invoked at runtime, so this works on Vercel.
 - If you'd rather use MongoDB Atlas (needed for Vercel anyway, since Vercel can't reach `localhost`), grab your connection string from Atlas and paste it in instead — see step 2.
 
 Generate a strong `JWT_SECRET` with:
@@ -72,8 +77,21 @@ cloud MongoDB instance. The free tier of MongoDB Atlas is enough for this projec
 4. Before deploying, add these **Environment Variables** in the Vercel project settings:
    - `MONGODB_URI` → your Atlas connection string
    - `JWT_SECRET` → the same random string you generated earlier (or a new one for production)
+   - Do **not** set `REPORTS_DIR` or `SETS_DIR` — those are Windows paths that don't exist on Vercel.
+     Leave them unset and the app uses the `reports/` folder committed to the repo.
 5. Click **Deploy**. That's it — the same codebase handles the frontend, the API routes, and talks
    straight to MongoDB Atlas.
+
+### A note on the MATLAB pipeline
+
+MATLAB can't run on Vercel, and nothing here tries to. The screening reports are generated ahead of
+time on your machine and committed to the repo (`npm run sync:reports`); at runtime the app only
+matches an upload to one of them, rewrites the patient block, and serves it. Re-run the pipeline →
+re-run the sync → commit → redeploy.
+
+`next.config.js` lists `reports/` under `outputFileTracingIncludes`. Next's build tracer can't see
+files that are only read at runtime, so without that entry they'd be dropped from the serverless
+bundle and every report would 404 in production.
 
 ## How the data flows
 

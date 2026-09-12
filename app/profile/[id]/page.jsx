@@ -5,6 +5,9 @@ import dbConnect from '@/lib/mongodb';
 import Submission from '@/models/Submission';
 import { getCurrentUser } from '@/lib/session';
 import GradientBackdrop from '@/components/GradientBackdrop';
+import AnalysisPanel from '@/components/AnalysisPanel';
+import ReportDownloadButton from '@/components/ReportDownloadButton';
+import { refreshStaleAnalysis } from '@/lib/reportSets';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +23,10 @@ export default async function SubmissionDetailPage({ params }) {
 
   if (!submission) notFound();
 
+  // Submissions completed before the grade source changed still carry the old
+  // findings — re-match them so the page agrees with the PDF.
+  await refreshStaleAnalysis(submission);
+
   const p = submission.personalData || {};
   const fields = [
     ['Age', p.age],
@@ -33,6 +40,17 @@ export default async function SubmissionDetailPage({ params }) {
   ];
 
   const date = new Date(submission.completedAt || submission.createdAt).toLocaleString();
+
+  // Plain objects only — this is handed to a client component.
+  const reportData = {
+    _id: submission._id.toString(),
+    personalData: submission.personalData ? submission.personalData.toObject() : {},
+    leftEyeImage: submission.leftEyeImage,
+    rightEyeImage: submission.rightEyeImage,
+    createdAt: submission.createdAt?.toISOString?.() || null,
+    completedAt: submission.completedAt?.toISOString?.() || null,
+    analysis: submission.analysis ? JSON.parse(JSON.stringify(submission.analysis)) : null,
+  };
 
   return (
     <div className="relative min-h-[calc(100vh-73px)] px-5 py-16">
@@ -53,6 +71,7 @@ export default async function SubmissionDetailPage({ params }) {
                 <p className="text-xs text-white/40">Submitted {date}</p>
               </div>
             </div>
+            <ReportDownloadButton submission={reportData} />
           </div>
 
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -94,6 +113,8 @@ export default async function SubmissionDetailPage({ params }) {
               />
             </div>
           </div>
+
+          <AnalysisPanel analysis={reportData.analysis} submissionId={reportData._id} />
         </div>
       </div>
     </div>

@@ -299,7 +299,147 @@ The result is a much smaller base64 string that gets sent in the `PATCH` request
 
 `ImageDropzone.jsx` is the UI wrapper: handles drag-and-drop events, click-to-browse via a hidden
 `<input type="file">`, shows a preview once an image is set, and surfaces errors (e.g. non-image
-files).
+files). It also fingerprints the file *before* the resize (see §7.1).
+
+### 7.1 Pulling the pre-generated screening reports
+
+The MATLAB/ML pipeline is a separate project. **MATLAB never runs here** — it can't run on Vercel,
+and it doesn't need to. It produces finished PDFs and overlay images ahead of time; this app matches
+an upload to one of them and serves it. When someone uploads a left/right pair belonging to one of
+the demo sets, they get that real report instead of the placeholder PDF.
+
+**Where the files live**
+
+They're committed into this repo, so they deploy with the app:
+
+```
+reports/<set>/            screening_report.pdf + *_attention.png / *_panels.png
+public/demo-sets/<set>/   the source fundus images (static assets)
+lib/sourceImages.json     stem + sha256 per source image — the matcher's index
+```
+
+Refresh them after re-running the pipeline:
+
+```bash
+npm run sync:reports              # copies from REPORTS_DIR / SETS_DIR
+npm run sync:reports -- --no-images   # skip the 46MB of source images
+```
+
+`REPORTS_DIR` and `SETS_DIR` (in `.env.local`) say where to copy *from*, and the app will read them
+directly if they exist. Resolution order is: `REPORTS_DIR` if set and present → the in-repo `reports/`
+→ the pipeline's folder on this machine. In normal development nothing is set, so the repo copy wins
+and local behaves exactly like production.
+
+`lib/sourceImages.json` is why the source images don't need to be on the server: matching only needs
+their hashes, and those are a few KB. `public/demo-sets/` exists purely so you can download a demo
+pair on any machine — delete it and everything still works.
+
+The sync strips the grade out of the published image names (`two_grade1_left_19722bff5a09.png` →
+`two_left_19722bff5a09.png`). That number is the APTOS ground-truth label and it disagrees with what
+the report concludes (see §7.2), so leaving it on a file someone picks from a folder is misleading.
+The 12-hex id code is what actually links an image to its report, and that's untouched. Both
+spellings still match, so pairs straight out of the pipeline's own `sets/` folder keep working.
+
+**How an upload is matched** (`lib/reportSets.js`):
+
+1. `ImageDropzone` hashes the file exactly as it sits on disk (SHA-256, before the canvas resize) and
+   sends `{ fileName, sha256 }` along with the image.
+2. On final submit, `matchReportSet()` compares that hash against every image in `SETS_DIR`. A match
+   here is rename-proof — the file can be called anything.
+3. If there's no hash match, it falls back to the file name: the exact stem, then the 12-hex id code
+   embedded in it (`three_grade2_left_115e42dd6a81`).
+4. The set matching **both** eyes wins; a one-eye match is still used. Named `set_*` folders beat
+   ad-hoc ones (`demo_patient` reuses set one's images).
+5. The result — grade, severity label, overlay URLs, report URL — is stored on the submission as
+   `analysis`. Unknown images give `null`, and the app falls back to the generated placeholder PDF.
+
+Both folders are re-scanned every 10 seconds, so re-running the pipeline shows up without a restart.
+
+**Serving the files** — the reports folder isn't under `public/`, so Next won't serve it statically.
+`app/api/reports/[...path]/route.js` streams files out of it for signed-in users only, clamped to
+`REPORTS_DIR` (no `..` escapes) and limited to PDF/PNG/JPEG. `?download=1` forces a download rather
+than an inline view.
+
+`GET /api/reports/status` (signed in) dumps the resolved folders and every set found — check it first
+when a match doesn't happen.
+
+`AnalysisPanel.jsx` renders the result: grade badge, attention/panels toggle per eye, and a link to
+the full PDF. It appears on the submit-success screen and on `/profile/[id]`.
+
+### 7.2 Where the grade comes from — `REPORT_FINDINGS`
+
+There are two different grades for every demo set and they usually disagree:
+
+- the **dataset label** in the file name (`two_grade1_...`) — APTOS's ground truth
+- the **model's grade** in the screening report — what the pipeline actually concluded
+
+For set two those are 1 and 2. For set six they're 4 and 3. Only set five agrees with itself.
+
+**The report wins**, always. It's the document the user is handed, so a badge in the UI that
+contradicts it is a bug — that's exactly what the first version did.
+
+`REPORT_FINDINGS` in `lib/reportSets.js` holds the per-eye grade, referable flag and calibrated
+probability transcribed from each PDF, plus the worst-eye verdict line. The overall grade is the
+worse of the two eyes. The file-name grade is still carried as `groundTruthGrade` for reference, but
+nothing user-facing reads it.
+
+It's a hand-maintained table, so **re-running the pipeline means updating it**. Open each
+`screening_report.pdf` and copy two things: the verdict line (`FLAGGED FOR REVIEW — worst eye RIGHT:
+Severe NPDR (level 3), referable probability 84%`) and the two per-eye headings (`Left eye — Moderate
+NPDR (level 2)`). A set with no entry falls back to the dataset label rather than showing nothing.
+
+Stored submissions carry a `schemaVersion`. When it's older than `ANALYSIS_SCHEMA_VERSION`,
+`refreshStaleAnalysis()` re-runs the match and saves the result on the next read, so submissions made
+before this changed don't keep showing the old grade. Bump the version whenever the meaning of a
+stored `analysis` changes.
+
+### 7.3 Rewriting the patient block — `lib/personalizeReport.js`
+
+The pipeline bakes a patient block into page 1 of every report (`SET-THREE-003`, age 61, HbA1c 8.6%…)
+— whoever `generateScreeningReport.m` was called for. Those aren't the app user's details, so the app
+swaps them out before serving.
+
+**What changes and what doesn't.** Only the seven rows of the `Patient` table. Grades, lesion counts,
+probabilities, the fundus images and the attention maps are all derived from the images, so they stay
+byte-for-byte as the pipeline produced them. Changing them would be inventing clinical findings.
+
+| PDF row | Form field |
+|---|---|
+| Patient ID | `RS-` + last 8 of the submission id |
+| Age | `age` |
+| Sex | `gender` |
+| Diabetes | `diabetesType` |
+| Years since diagnosis | `diabetesDurationYears` |
+| HbA1c | `hba1c` + `%` |
+| Blood pressure | `bloodPressure` |
+
+Anything the user left blank renders as an em dash — the same placeholder `generateScreeningReport.m`
+uses — rather than leaving the pipeline's value in place. (`bloodSugarLevel` and `smoker` have no row
+in the PDF, so they don't appear; adding one means changing the MATLAB template and re-running it.)
+
+**How it works.** The old values are *deleted from the page's content stream*, not painted over — a
+white rectangle would leave them selectable, copyable and visible to any text extractor, which for a
+medical document is a real leak. So the module:
+
+1. Inflates page 1's content stream.
+2. Walks it tracking the CTM (`q`/`Q`/`cm`) so each `BT…ET` text block's position on the page is
+   known.
+3. Picks the seven blocks sitting at x=244.8 on the row baselines (222.68pt from the top, 12pt pitch)
+   and splices them out.
+4. Writes the submitted values onto those exact baselines in NotoSans 10pt — the same font and size
+   the pipeline used, so the result is indistinguishable from a natively generated report.
+
+`assets/fonts/NotoSans-Regular.ttf` is copied from MATLAB's own Report Generator resources (Noto is
+OFL-licensed, so shipping it is fine). Without it the code falls back to Helvetica, which works but
+won't match the labels.
+
+If the layout ever stops matching — a redesigned template, different coordinates — step 3 finds
+nothing, the module leaves the page alone, and the user still gets the pipeline's original PDF. Update
+`LAYOUT` in that file when the template changes.
+
+**Where it's served:** `GET /api/submissions/<id>/report` (signed in, owner only). That's what the
+download button and the "Open the full screening report" link both use. `/api/reports/...` still
+serves the raw, unpersonalized file.
 
 ---
 

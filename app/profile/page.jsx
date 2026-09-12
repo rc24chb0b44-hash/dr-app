@@ -81,7 +81,14 @@ function SubmissionRow({ submission }) {
         </div>
       </div>
       {isCompleted ? (
-        <ChevronRight size={18} className="text-white/30" />
+        <div className="flex items-center gap-3">
+          {submission.analysis?.gradeLabel && (
+            <span className="rounded-full border border-white/15 bg-white/[0.06] px-3 py-1 text-xs font-medium text-white/70">
+              Grade {submission.analysis.grade} · {submission.analysis.gradeLabel}
+            </span>
+          )}
+          <ChevronRight size={18} className="text-white/30" />
+        </div>
       ) : (
         <span className="rounded-full bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-300">
           In progress

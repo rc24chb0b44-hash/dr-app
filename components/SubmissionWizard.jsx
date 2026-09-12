@@ -6,6 +6,7 @@ import { ArrowLeft, ArrowRight, AlertCircle, CheckCircle2, Loader2 } from 'lucid
 import StepIndicator from './StepIndicator';
 import ImageDropzone from './ImageDropzone';
 import ReportDownloadButton from './ReportDownloadButton';
+import AnalysisPanel from './AnalysisPanel';
 
 const emptyPersonal = {
   age: '',
@@ -30,10 +31,15 @@ export default function SubmissionWizard({ initialData }) {
   });
   const [leftEyeImage, setLeftEyeImage] = useState(initialData.leftEyeImage || '');
   const [rightEyeImage, setRightEyeImage] = useState(initialData.rightEyeImage || '');
+  // File name + sha256 of each upload, used server-side to pull the matching
+  // pre-generated screening report.
+  const [leftEyeMeta, setLeftEyeMeta] = useState(initialData.leftEyeMeta || null);
+  const [rightEyeMeta, setRightEyeMeta] = useState(initialData.rightEyeMeta || null);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
+  const [completed, setCompleted] = useState(null);
 
   async function patchSubmission(body) {
     const res = await fetch(`/api/submissions/${submissionId}`, {
@@ -72,8 +78,14 @@ export default function SubmissionWizard({ initialData }) {
       const nextStep = Math.min(step + 1, 4);
       const body = { currentStep: nextStep };
       if (step === 1) body.personalData = personalData;
-      if (step === 2) body.leftEyeImage = leftEyeImage;
-      if (step === 3) body.rightEyeImage = rightEyeImage;
+      if (step === 2) {
+        body.leftEyeImage = leftEyeImage;
+        body.leftEyeMeta = leftEyeMeta;
+      }
+      if (step === 3) {
+        body.rightEyeImage = rightEyeImage;
+        body.rightEyeMeta = rightEyeMeta;
+      }
 
       await patchSubmission(body);
       setStep(nextStep);
@@ -93,12 +105,15 @@ export default function SubmissionWizard({ initialData }) {
     setError('');
     setSaving(true);
     try {
-      await patchSubmission({
+      const saved = await patchSubmission({
         personalData,
         leftEyeImage,
         rightEyeImage,
+        leftEyeMeta,
+        rightEyeMeta,
         complete: true,
       });
+      setCompleted(saved);
       setDone(true);
     } catch (err) {
       setError(err.message);
@@ -115,21 +130,27 @@ export default function SubmissionWizard({ initialData }) {
       rightEyeImage,
       createdAt: initialData.createdAt,
       completedAt: new Date().toISOString(),
+      // The server does the report matching, so take its answer.
+      analysis: completed?.analysis || null,
     };
     return (
-      <div className="glass-card flex flex-col items-center gap-4 p-14 text-center">
-        <CheckCircle2 size={48} className="text-emerald-400" />
-        <h2 className="font-display text-2xl font-bold">Response submitted!</h2>
-        <p className="text-white/50">
-          Thank you for contributing. You can download a copy of your report below, or view it
-          anytime from your profile.
-        </p>
-        <div className="mt-4 flex flex-col items-center gap-3 sm:flex-row">
-          <ReportDownloadButton submission={submittedData} />
-          <button type="button" onClick={() => router.push('/profile')} className="btn-secondary">
-            Go to my profile
-          </button>
+      <div className="glass-card p-10 sm:p-14">
+        <div className="flex flex-col items-center gap-4 text-center">
+          <CheckCircle2 size={48} className="text-emerald-400" />
+          <h2 className="font-display text-2xl font-bold">Response submitted!</h2>
+          <p className="text-white/50">
+            Thank you for contributing. You can download a copy of your report below, or view it
+            anytime from your profile.
+          </p>
+          <div className="mt-4 flex flex-col items-center gap-3 sm:flex-row">
+            <ReportDownloadButton submission={submittedData} />
+            <button type="button" onClick={() => router.push('/profile')} className="btn-secondary">
+              Go to my profile
+            </button>
+          </div>
         </div>
+
+        <AnalysisPanel analysis={submittedData.analysis} submissionId={submissionId} />
       </div>
     );
   }
@@ -154,7 +175,14 @@ export default function SubmissionWizard({ initialData }) {
           <p className="mb-5 mt-1 text-sm text-white/50">
             Upload a clear, well-lit photo of your left eye.
           </p>
-          <ImageDropzone label="Upload left eye photo" value={leftEyeImage} onChange={setLeftEyeImage} />
+          <ImageDropzone
+            label="Upload left eye photo"
+            value={leftEyeImage}
+            onChange={(dataUrl, meta) => {
+              setLeftEyeImage(dataUrl);
+              setLeftEyeMeta(meta || null);
+            }}
+          />
         </div>
       )}
 
@@ -164,7 +192,14 @@ export default function SubmissionWizard({ initialData }) {
           <p className="mb-5 mt-1 text-sm text-white/50">
             Upload a clear, well-lit photo of your right eye.
           </p>
-          <ImageDropzone label="Upload right eye photo" value={rightEyeImage} onChange={setRightEyeImage} />
+          <ImageDropzone
+            label="Upload right eye photo"
+            value={rightEyeImage}
+            onChange={(dataUrl, meta) => {
+              setRightEyeImage(dataUrl);
+              setRightEyeMeta(meta || null);
+            }}
+          />
         </div>
       )}
 
