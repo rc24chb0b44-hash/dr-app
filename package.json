@@ -1,0 +1,27 @@
+{
+  "name": "dr-data-collector",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "^14.2.35",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "mongoose": "^8.5.1",
+    "bcryptjs": "^2.4.3",
+    "jose": "^5.6.3",
+    "framer-motion": "^11.3.19",
+    "jspdf": "^2.5.2",
+    "lucide-react": "^0.417.0"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.7",
+    "postcss": "^8.4.40",
+    "autoprefixer": "^10.4.19"
+  }
+}
